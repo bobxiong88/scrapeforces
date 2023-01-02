@@ -9,6 +9,17 @@ import os
 import requests
 import random
 import shutil
+import mysql.connector as mysql
+
+HOST = "sql9.freemysqlhosting.net" # or "domain.com"
+DATABASE = "sql9587489"
+USER = "sql9587489"
+PASSWORD = "cxs48SNIsG"
+mydb = mysql.connect(host=HOST, database=DATABASE, user=USER, password=PASSWORD)
+print("Connected to:", mydb.get_server_info())
+
+cursor = mydb.cursor()
+
 app = Flask(__name__)
 
 executor = Executor(app)
@@ -25,7 +36,7 @@ def post():
     # "Yes" = unique
     rid = hash(handle+status+unique+str(random.randint(1,int(1e9)+7)))
     executor.submit(get_submissions,handle,status,unique,rid)
-    return rid
+    return json.dumps({"rid": rid})
 
 @app.errorhandler(404)
 def page_not_found(error):
@@ -34,13 +45,7 @@ def page_not_found(error):
 def get_submissions(handle, status, unique, rid):
     
     # in case people troll
-    if not handle or not status or not unique:
-        '''
-        do sql shit here
-        Send it in the form of database[rid] = {"status": "failed", "payload": 0}
-        '''
-        return
-
+    
     '''
     do sql shit here
     send it in the form of database[rid] = {"status": "starting", "payload": 0}
@@ -60,10 +65,25 @@ def get_submissions(handle, status, unique, rid):
     response = requests.get(handleurl)
     submissions = json.loads(response.text)['result']
 
+    print("# of subs: ", len(submissions))
+    # Create
+    if len(submissions) == 0:
+        print("here")
+        mycursor.execute("INSERT INTO progress (rid, status, current, total) VALUES (%s, %s, %s, %s)", (rid, "failed", 0, 0))
+        mydb.commit()
+        return
+
+    mycursor.execute("INSERT INTO progress (rid, status, current, total) VALUES (%s, %s, %s, %s)", (rid, "starting", 0, len(submissions)))
+    print("here")
+    mydb.commit()
+
+
     # check for existing files
     if os.path.isdir(path):
         shutil.rmtree('submissions')
     os.mkdir('submissions')
+    
+    print("submissions created")
 
     # pause to not get rate limited by the cf server 
     time.sleep(1)
@@ -74,6 +94,8 @@ def get_submissions(handle, status, unique, rid):
 
     # maintain set of source codes for uniquness
     exist = dict()
+    
+    print("balls1")
 
     # counting
     prev = set()
@@ -88,7 +110,15 @@ def get_submissions(handle, status, unique, rid):
     if unique: submissions = nxt[:]
 
     print(exist)
+    sub_count = 0;
+    print("balls")
     for submission in submissions[:]:
+        print("suballs")    
+        # Update
+        sub_count += 1
+        mycursor.execute("UPDATE progress SET status = %s, current = %s WHERE rid = %s", ("downloading", sub_count, rid))
+        mydb.commit()
+
         print("__________________________________________________________")
         # basic information about submission
         contestId = submission['contestId']
@@ -112,6 +142,7 @@ def get_submissions(handle, status, unique, rid):
         cnt = 0
         # basically if codeforces is stupid and makes you try again, then you wait 30 seconds before trying agian
         # if it doesnt work after waiting for 30 seconds, just skip it idk what to do i hate codeforces 
+        print("whileballs")
         while True:
             try:
                 cnt += 1
@@ -161,9 +192,19 @@ def get_submissions(handle, status, unique, rid):
 
         Send it in the form of database[rid] = {"status": "downloading", "payload": (69,420)}
         '''
-        
+
         # pause or else codeforces big stupid
         time.sleep(5)
+    
+    # Finished
+    mycursor.execute("UPDATE progress SET status = %s, current = %s WHERE rid = %s", ("finished", len(submissions), rid))
+    mydb.commit()
+
+    # check if it worked
+    mycursor.execute("SELECT * FROM progress")
+
+    for x in mycursor:
+        print(x)
 
     
 # replace 192.168.56.1 with your actual IPv4 address
